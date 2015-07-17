@@ -103,7 +103,7 @@ Example:
 postprocessing.sh AAONP ref/my_references.fasta
 ```
 
-The ```postprocessing.sh``` script utilizes Java (>1.7), Python (2.7), SAMtools (http://www.htslib.org), and BROAD's Genome Analysis Toolkit (GATK) (https://www.broadinstitute.org/gatk/).
+The ```postprocessing.sh``` script utilizes Java (>1.7), Python (2.7), and BROAD's Genome Analysis Toolkit (GATK) (https://www.broadinstitute.org/gatk/).
 Currently, the ```postprocessing.sh``` script is implemented for NERSC and utilizes NERSC's module system (```module load```). 
 
 The resulting HTML pages also provide links the XML files that can be nicely viewed in the Integrative Genomics Viewer (IGV), developed by the BROAD institute (https://www.broadinstitute.org/software/igv/). 
