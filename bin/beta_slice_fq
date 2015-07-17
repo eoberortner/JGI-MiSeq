@@ -1,0 +1,202 @@
+#!/usr/bin/env perl
+use Modern::Perl;
+use Cwd;
+use GT::Clutils;
+use GT::Utils;
+use File::Basename;
+use Getopt::Long;
+use GT::Reseq::Utils;
+
+umask 2;
+
+#my $reseq_bin_dir = '/jgi/tools/groups/gentech/phoebetest/bin';
+#my $reseq_bin_dir = '/global/homes/j/j_martin/dev/jel-pipe';
+my $reseq_bin_dir  = '/global/dna/projectdirs/RD/reseq_store/opt/bin';
+
+my ( $base_dir, $fastq_dir, $fqsource_dir, $sge_project_opt, $config_file );
+
+$base_dir     = 'bwa_dir';
+$fastq_dir    = 'fastq_dir';    # in base_dir
+$fqsource_dir = 'fastq_dir';    # in dir
+
+my $help;
+
+GetOptions(
+	'basedir=s'         => \$base_dir,
+	'sourcedir=s'       => \$fqsource_dir,
+	'Project|project=s' => \$sge_project_opt,
+	'config=s'          => \$config_file,
+	'help'              => \$help,
+);
+
+my @dir_list = @ARGV;
+
+if( $config_file ) {
+	@dir_list = ru_add_dirs_from_config_file( $config_file, @dir_list );
+}
+
+if ( $help || !defined $base_dir || ! @dir_list ) {
+	my $bin = basename $0;
+	print STDERR "\n$bin [options] dirs*\n\n";
+	print STDERR " -base   [bwa_dir]    alignment directory, sliced files will be base/fastq_dir\n";
+	print STDERR " -source [fastq_dir]  subdirectory with source fastqs \n";
+	print STDERR " -P       STRING      sge accounting project name for qsub\n";
+	print STDERR " -config  FILE        config file ( libr.info format )\n";
+	print STDERR "\n";
+
+	exit;
+}
+
+$sge_project_opt = $sge_project_opt ? " -P $sge_project_opt " : '';
+
+my $slots  = 2;    # default single
+my $i      = 1;
+my $script = "run_slice_${$}";
+
+#print "dir_list is @dir_list\n";
+
+@dir_list     = grep { -d $_ } @dir_list;
+my %dreads    = ();
+my %bad_links = ();
+
+for my $dir ( @dir_list ) {
+	# if your fastq files aren't gzipped, you are a bad person
+	my @reads = glob("$dir/$fqsource_dir/*fastq.gz $dir/$fqsource_dir/*.fq.gz");
+	if ( ! @reads ) { 
+		warn "no gzipped fastq files found in $dir/$fqsource_dir\nEnsure your fastq files are gzipped\n";
+		next;
+	}
+	else {
+		for my $read ( @reads ) {
+			if ( ! -e $read ) {
+				push @{ $bad_links{ $dir } }, $read;
+			}
+		}
+		$dreads{ $dir } = \@reads;
+	}
+}
+if ( %bad_links ) {
+	print STDERR "\nERROR: some linked fastqs are missing ( restoring from tape perhaps? )\n\n";
+
+	for my $dir ( sort keys %bad_links ) {
+		for my $file ( @{ $bad_links{ $dir } } ) {
+			print STDERR "missing: $file\n";
+		}
+	}
+	print "\n";
+	exit ;
+}
+
+for my $dir ( sort keys %dreads ) {
+	
+	if ( !-e "$dir/$base_dir" ) {
+		mkdir "$dir/$base_dir" or die $!;
+	}
+	if ( !-e "$dir/$base_dir/bam_dir" ) {
+		mkdir "$dir/$base_dir/bam_dir" or die $!;
+	}
+	if ( !-e "$dir/$base_dir/$fastq_dir" ) {
+		mkdir "$dir/$base_dir/$fastq_dir" or die $!;
+	}
+
+	for my $read ( @{ $dreads{ $dir } }) {
+		my $name  = basename $read;
+		my $bname = $name;
+		$bname =~ s/[.]fastq[.]gz$//;
+		$bname =~ s/[.]fq[.]gz$//;
+
+		my $type; # if undef it's guessed
+
+		# if any paired are being sliced set pe to 4, to be kind.
+
+		# TODO: to be efficient, should qsub separately single and paired
+
+		if ( $bname =~ /^pe-/ ) {
+			$type  = 'paired';
+			$slots = 4;
+		}
+		elsif ( $bname =~ /^se-/ ) {
+			$type = 'single';
+		}
+
+		# check for empty fastq
+		zopen( my $fh, $read );
+		my $has_a_read = 0;
+		while (<$fh>) {
+			$has_a_read++;
+			last if ( $has_a_read >= 3 );
+		}
+		close($fh);
+		if ( !$has_a_read ) {
+			warn "$dir has empty fastq $read, skipping";
+			next;
+		}
+		my $guess = `guess_qual_format $read`;
+		chomp $guess;
+		my $illoption = $guess eq 'sanger' ? '' : ' -ill2std ';
+		my $cmd;
+		if ( defined $type && $type eq 'paired' ) {
+			print STDERR "type is paired\n";
+			my $prefix = "$dir/$base_dir/$fastq_dir/$bname";
+			$cmd = "$reseq_bin_dir/fastq_slice -gzip -num 8000000 $illoption -suffix fq $read $prefix";
+		}
+		elsif ( defined $type && $type eq 'single' ) {
+			print STDERR "type is single end\n";
+			my $prefix = "$dir/$base_dir/$fastq_dir/$bname";
+			$cmd = "$reseq_bin_dir/fastq_slice -gzip -num 8000000 $illoption -suffix fq $read $prefix";
+		}
+		else {  # DEFAULT CASE, above could probably be removed as it's remnant from the maq->bwa switchover
+			if ( !defined $type ) {
+				($type) = split /\s+/, run_bt_or_die( "$reseq_bin_dir/fastq_single_or_paired $read" );
+			}
+			if ( $type eq 'paired' ) {
+				my $prefix = "$dir/$base_dir/$fastq_dir/pe-$bname";
+				$slots = 4;
+
+				# $prefix .= ".$barcode" if ( $barcode );
+				$cmd = "$reseq_bin_dir/fastq_slice -split -gzip -num 8000000 $illoption -suffix fq $read $prefix";
+			}
+			elsif ( $type eq 'single' ) {
+				my $prefix = "$dir/$base_dir/$fastq_dir/se-$bname";
+
+				# $prefix .= ".$barcode" if ( $barcode );
+				$cmd = "$reseq_bin_dir/fastq_slice -gzip -num 8000000 $illoption -suffix fq $read $prefix";
+			}
+			else {
+				warn "WARNING: skipping read $read don't understand what type it is $!";
+				next;
+			}
+		}
+		my @cmds = ( "module load pigz", $cmd );
+		write_array_cmds( \@cmds, $i++, $script );
+	}
+}
+
+my $qs = "qsub -terse -cwd -b yes -now no -notify -j yes -m as -M eoberortner\@lbl.gov -w e $sge_project_opt -l ram.c=700M,h_rt=03:58:01 -R y -pe pe_slots $slots";
+
+$i--;
+if ( !$i ) {
+	warn "NO TASKS TO RUN!\n";
+}
+else {
+	write_array_run_script("$script.sh");
+	my $cmd = "$qs -t 1-$i ./$script.sh";
+	print STDERR "cmd: $cmd\n";
+	my $jid = `$cmd`;
+	if ( ${^CHILD_ERROR_NATIVE} ) {
+		die "error running $cmd ( error = ${^CHILD_ERROR_NATIVE} )";
+	}
+	print $jid;
+}
+
+#sub run_bt_or_die {
+#	my ( $cmd ) = @_;
+#
+#	my $result = `$cmd`;
+#
+#	if ( ${^CHILD_ERROR_NATIVE} ) {
+#		die "error running $cmd ( error = ${^CHILD_ERROR_NATIVE} )";
+#	}
+#
+#	return $result;
+#}

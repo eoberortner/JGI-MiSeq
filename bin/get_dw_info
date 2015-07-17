@@ -1,0 +1,445 @@
+#!/usr/bin/env perl
+#!/jgi/tools/bin/perl -w
+use warnings;
+use strict;
+use File::Basename;
+use Getopt::Long;
+use GT::JGI;
+
+my ( $help, $debug, $new_print, $command, @options );
+
+GetOptions( 
+	'debug'    => \$debug,
+	'newprint' => \$new_print, # genus:Populus instead of Populus
+	'help'     => \$help,
+);
+
+my $func  = shift;
+
+my %functions = ( 
+	libs2info   => \&libs2info,
+  proj2info   => \&proj2info,
+  prop2info   => \&prop2info,
+	runs2info   => \&runs2info,
+	libs2detail => \&libs2detail,
+	fpid2spid   => \&fpid2spid,
+	spid2fpid   => \&spid2fpid,
+);
+
+my %arguments = ( # what each thing desires, for help blurb in
+	libs2info   => 'LIBR',
+	proj2info   => 'project-ID',
+	prop2info   => 'proposal-ID',
+	runs2info   => 'run.lane.basecall[.barcode].fastq.gz',
+	libs2detail => 'LIBR',
+	fpid2spid   => 'FPID',
+	spid2fpid   => 'SPID',
+);
+
+if ( $help || ! defined $func || ! exists $functions{ $func } ) {
+  usage();
+}
+
+&{ $functions{ $func } };
+
+# get whichever sql and query db. name must be in %functions and %arguments
+#  if using "get_info_from_db", arg to sql_dw_info must be listed there in %where_clause.
+
+sub libs2info {
+	get_info_from_db( sql_dw_info( 'libs' ) );
+}
+sub proj2info {
+	get_info_from_db( sql_dw_info( 'proj' ) );
+}
+sub prop2info {
+	get_info_from_db( sql_dw_info( 'prop' ) );
+}
+sub runs2info {
+	get_info_from_db( sql_dw_info( 'runs' ) );
+}
+sub libs2detail {
+	get_detail_from_db( sql_detail_info( 'libs' ) );
+}
+sub fpid2spid {
+	get_pid2pid( sql_pid( 'fpid' ) );
+}
+sub spid2fpid {
+	get_pid2pid( sql_pid( 'spid' ) );
+}
+
+=head1 get_pid2pid
+
+ swaps spid for fpid and vicey versey
+
+=cut
+
+sub get_pid2pid {
+	my ( $dw_sql ) = @_;
+
+	my $calling_function = get_caller();
+	my $query_type_for_help = exists $arguments{ $calling_function } ? $arguments{ $calling_function } : "something_undocumented";
+	
+	if ( ! @ARGV &&  -t STDIN ) {
+		my $bin = basename $0;
+		print STDERR "Usage: $bin $calling_function $query_type_for_help\n\n";
+		print STDERR "$bin $calling_function [FS]PID [FS]PID [...] > my.info\n\n";
+		exit;
+	}
+
+	my $dw_dbh = open_dw_db;
+	$dw_dbh->login;	
+
+	$dw_dbh->open( $dw_sql );
+	for my $arg ( @ARGV ? @ARGV : <> ) {
+		my %seen_results = ();
+		my $found_in_dw_db = 0;
+
+		chomp $arg;
+		$dw_dbh->bind( $arg );
+
+		while( my ( $pid ) = $dw_dbh->fetch() ) {
+			$found_in_dw_db++;
+			print "$pid\t$arg\n";
+		}
+	}
+	$dw_dbh->close();
+	$dw_dbh->logout();
+}
+
+=head1 get_detail_from_db
+
+ like get_info, but outputs sensible yaml
+
+=cut
+
+sub get_detail_from_db {
+	my ( $dw_sql ) = @_;
+
+  #  help babble
+
+	my $calling_function = get_caller();
+	my $query_type_for_help = exists $arguments{ $calling_function } ? $arguments{ $calling_function } : "something_undocumented";
+
+	if ( ! @ARGV &&  -t STDIN ) {
+		my $bin = basename $0;
+		print STDERR "Usage: $bin $calling_function $query_type_for_help\n\n";
+		print STDERR "$bin $calling_function LIBRA LIBRB LIBRC [...] > my.info\n\n";
+		exit;
+	}
+
+	my $dw_dbh = open_dw_db;
+	$dw_dbh->login;	
+
+	$dw_dbh->open( $dw_sql );
+	for my $arg ( @ARGV ? @ARGV : <> ) {
+		my %seen_results = ();
+		my $found_in_dw_db = 0;
+
+		chomp $arg;
+		$dw_dbh->bind( $arg );
+
+		while( my ( $lib, $type ) = $dw_dbh->fetch() ) {
+			$found_in_dw_db++;
+
+			# previous view returned multiple results ( should be fixed in view def not in sql ), 
+			# so did this, it's lightweight so why not.
+
+			if ( defined $lib && ! defined $type ) { 
+				$type = 'Regular (DNA)';
+			}
+
+			my $results_string = join('',  $lib, $type );
+			next if ( exists $seen_results{ $results_string } );
+			$seen_results{ $results_string }++;
+
+			print join("\t", $lib, $type ), "\n";
+		}
+	}
+	$dw_dbh->close;
+	$dw_dbh->logout;
+}
+
+
+
+=head1 get_info_from_db
+
+ query SDM and DW databases for standard info and print results.
+
+ expects sql statement that returns these fields from dw or venonat
+	lib
+	final_deliverable_project_id / pmo_project_id
+	proposal_id / pmo_proposal_id
+	genus
+	species
+	strain
+	isolate
+	sequence_file_name
+
+=cut
+ 
+sub get_info_from_db {
+	my ( $dw_sql ) = @_;
+
+	my $calling_function = get_caller();
+	my $query_type_for_help = exists $arguments{ $calling_function } ? $arguments{ $calling_function } : "something_undocumented";
+
+	if ( ! @ARGV &&  -t STDIN ) {
+		my $bin = basename $0;
+		print STDERR "Usage: $bin $calling_function $query_type_for_help\n\n";
+		print STDERR " echo $query_type_for_help | $bin $calling_function > my.info\n\n";
+		exit;
+	}
+
+	my @args = @ARGV ? @ARGV : <>;
+
+  my $sdm_dbh = open_sdm_db;
+  my $dw_dbh  = open_dw_db;
+
+	$dw_dbh->login;
+	$sdm_dbh->login;
+
+	if ( $debug ) {
+		print STDERR "OPENING SQL: $dw_sql\n";
+	}
+	$dw_dbh->open( $dw_sql );
+	$sdm_dbh->open( sql_sdm_get_file_location_fastq() );
+
+	for my $arg ( @args ) {	
+		# Fix for view returning multiple results on some queries now
+		# ** enter a JIRA
+		my %seen_results = ();
+	
+		chomp( $arg );
+		if ( $debug ) {
+			print STDERR "BINDING: $arg\n";
+		}
+		$dw_dbh->bind( $arg );
+
+		my $found_in_dw_db = 0;
+		#while( my ( $lib, $sproj, $fproj, $prop, $norgan, $genus, $species, $strain, $isolate, $sfname )  = $dw_dbh->fetch() ) {
+		while( my ( $lib, $fproj, $prop, $genus, $species, $strain, $isolate, $sfname, $fs_location )  = $dw_dbh->fetch() ) {
+			$found_in_dw_db++;
+			if ( ! defined $isolate ){ $isolate = '' ;}
+
+			# view is returning multiple results, grr.
+			my $results_string = join('',  $lib, $fproj, $prop, $genus, $species, $strain, $isolate, $sfname, $fs_location );
+			next if ( exists $seen_results{ $results_string } );
+			$seen_results{ $results_string }++;
+
+			if ( defined $sfname && ! defined $fs_location ) {
+				if ( $debug ) {
+					print STDERR "SDM_BINDING: $sfname\n";
+				}
+				$sdm_dbh->bind( $sfname );
+				while ( my ( $fs_location, $file_name ) = $sdm_dbh->fetch() ) {
+          # pmo, lib, fastq, organism
+					if ( $new_print ) {
+						print join("\t", "${prop}_${fproj}", $lib, "$fs_location/$file_name", "genus:$genus", "species:$species", "strain:$strain", "isolate:$isolate" ), "\n";
+					}	
+					else {
+						print join("\t", "${prop}_${fproj}", $lib, "$fs_location/$file_name", "$genus", "$species", "$strain", "$isolate" ), "\n";
+					}
+				}
+			}
+			else {
+				if( $new_print ) {
+					print join("\t", "${prop}_${fproj}", $lib, "$fs_location/$sfname", "genus:$genus", "species:$species", "strain:$strain", "isolate:$isolate" ), "\n";
+				}
+				else {
+					print join("\t", "${prop}_${fproj}", $lib, "$fs_location/$sfname", "$genus", "$species", "$strain", "$isolate" ), "\n";
+				}
+			}
+		}
+		if ( ! $found_in_dw_db ) {
+			# maybe just get this all from rqc for older libraries?a
+		  # :( proposal not in there ):
+			# still, seq_file stuff is in sdm, taxonomy is in rqc
+###
+#   in old and new, quick way to discover if multiplex, once we know...
+#  - LIBRARY -
+# select su.rqc_library_id, l.library_name, su.is_multiplex from seq_units su join library_info l on su.rqc_library_id = l.library_id where l.library_name = 'ATZH';
+#  - RUN UH NAME -
+# http://sdm.jgi-psf.org/cgi-bin/rqc_seq_unit_info.cgi?action=info&seq_unit_file_name=1742.5.1591.srf
+#
+# ** in datawarehouse, get list of library names associated with a pool library name'
+#
+#  1  select ls.library_name from library_stock ls
+#  2  join dw.library_stock_pool lsp on ls.library_stock_id = lsp.library_stock_id
+#  3  join dw.library_pool lp on lsp.library_pool_id = lp.library_pool_id
+#  4  where lp.pool_name = 'ATZH';
+####
+####
+#
+#   older are in rqc db
+# select individual_lib_name, index_sequence, bioclass_name
+# from multiplex_individual_lib
+# where pooled_lib_name = ?
+#
+#
+####
+			warn "WARNING: not in data warehouse\n";
+		}
+	}
+	$dw_dbh->close;
+	$sdm_dbh->close;
+	$dw_dbh->logout;
+	$sdm_dbh->logout;
+}
+
+# sql for sdm file location
+
+sub sql_sdm_get_file_location_fastq {
+  my $sql=<<EOS;
+select fs_location, file_name 
+from sdm_seq_unit_file 
+where file_name = ? 
+  and file_status = 'Local' 
+  and file_type = 'FASTQ'
+EOS
+  return( $sql );
+}
+
+# sql for data warehouse, joins provided by karen garcia
+
+sub sql_dw_info {
+ my ( $where_condition ) = @_;
+
+	return unless( $where_condition );
+
+  my %where_conditions = (
+    libs => 'where dw.library_name = ?',
+    proj => 'where dw.final_deliv_project_id = ?', 
+    prop => 'where dw.proposal_id = ?',
+    runs => 'where sdm.file_name = ?',
+  );
+
+  my $where_clause = exists $where_conditions{ $where_condition } 
+                   ? $where_conditions{ $where_condition } 
+                   : $where_condition;
+
+#       sp.sequencing_project_id,
+#       tax.ncbi_organism_name,
+
+
+# 130124.returning multiple results now!
+
+	my $sql=<<EOS;
+select dw.library_name,
+       dw.final_deliv_project_id,
+       dw.proposal_id,
+       dw.genus,
+       dw.species,
+       dw.strain,
+       dw.isolate,
+       sdm.file_name,
+       sdm.fs_location
+from dw.vw_reseq_metadata dw
+join dw.sdm_sequence_unit sdm on dw.library_name = sdm.library_name
+$where_clause
+EOS
+	return( $sql );
+}
+
+sub sql_detail_info {
+	my ( $where_condition ) = @_;
+
+	my %where_clause = ( 
+		libs => 'where library_name = ?',
+	);
+	my $where_clause = exists $where_clause{ $where_condition } 
+	                 ? $where_clause{ $where_condition } 
+	                 : $where_condition;
+
+	my $sql=<<EOS;
+select library_name, 
+       library_protocol 
+from dw.all_inclusive_report
+$where_clause
+EOS
+
+	return( $sql );
+}
+
+sub sql_pid {
+	my ( $from ) = @_;
+	my ( $spid, $fpid, $got, $gave ) = ( 'sequencing_project_id', 'final_deliv_project_id' );
+	if ( $from eq 'spid' ) {   $gave = $spid; $got = $fpid; }
+	elsif( $from eq 'fpid' ) { $gave = $fpid; $got = $spid; }
+	else { die "dont know from: $from $!" }
+
+	my $sql=<<EOSQL;
+select $got
+from dw.sequencing_project
+where $gave = ?
+EOSQL
+	return( $sql );
+}
+
+# help blurb for optionless call or $0 -h
+
+sub usage { 
+	my $bin = basename $0;
+  print STDERR "$bin\n";
+  print STDERR "\t",join("\n\t", sort keys %functions), "\n";
+  exit;
+}
+
+sub get_caller {
+	my ( $caller ) = ( caller( 2 ) )[ 3 ];
+	$caller =~ s/^main:://;
+	return( $caller );
+}
+
+__END__
+dw.sequencing_project;
+ Name					   Null?    Type
+ ----------------------------------------- -------- ----------------------------
+ SEQUENCING_PROJECT_ID			   NOT NULL NUMBER
+ GLS_SEQUENCING_PROJECT_ID			    VARCHAR2(16)
+ SEQUENCING_PRODUCT_ID				    NUMBER
+ SEQUENCING_STRATEGY_ID 		   NOT NULL NUMBER
+ DEFAULT_ACCOUNT_ID				    NUMBER
+ FINAL_DELIV_PROJECT_ID 		   NOT NULL NUMBER
+#where
+#	my $sql=<<EOS;
+#select l.library_name,
+#       fd.final_deliv_project_id,
+#       p.proposal_id,
+#       tax.genus,
+#       tax.species,
+#       tax.strain,
+#       tax.isolate,
+#       sdm.file_name
+#from dw.library_stock l
+#join dw.m2m_libstsowsegm mlbsow on l.library_stock_id = mlbsow.library_stock_id
+#join dw.sow_segment seg on mlbsow.sow_segment_id = seg.sow_segment_id
+#join dw.sow_item sow on seg.sow_item_id = sow.sow_item_id
+#join dw.sequencing_project sp on sow.sequencing_project_id = sp.sequencing_project_id
+#join dw.final_deliv_project fd on sp.final_deliv_project_id = fd.final_deliv_project_id
+#join dw.proposal p on fd.proposal_id = p.proposal_id
+#join dw.taxonomy_info tax on sp.taxonomy_info_id = tax.taxonomy_info_id
+#join dw.sdm_sequence_unit sdm on l.library_name = sdm.library_name
+#$where_clause
+#EOS
+#	return( $sql );
+#}
+# original SQL as recieved from kate/ITS
+select l.library_name,
+       sp.sequencing_project_id,
+       fd.final_deliv_project_id,
+       p.proposal_id,
+       tax.ncbi_organism_name,
+       tax.genus,
+       tax.species,
+       tax.strain,
+       tax.isolate
+from dw.library_stock l
+join dw.m2m_libstsowsegm mlbsow on l.library_stock_id = mlbsow.library_stock_id
+join dw.sow_segment seg on mlbsow.sow_segment_id = seg.sow_segment_id
+join dw.sow_item sow on seg.sow_item_id = sow.sow_item_id
+join dw.sequencing_project sp on sow.sequencing_project_id = sp.sequencing_project_id
+join dw.final_deliv_project fd on sp.final_deliv_project_id = fd.final_deliv_project_id
+join dw.proposal p on fd.proposal_id = p.proposal_id
+join dw.taxonomy_info tax on sp.taxonomy_info_id = tax.taxonomy_info_id
+order by library_name;
+

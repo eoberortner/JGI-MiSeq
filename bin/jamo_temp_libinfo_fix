@@ -1,0 +1,128 @@
+#!/usr/bin/env perl
+use Modern::Perl;
+use File::Basename;
+use Getopt::Long;
+use GT::JGI;
+
+load_modules_module( 'jamo' );
+
+my ( $do_rename, $help );
+
+GetOptions( 
+	'rename' => \$do_rename,
+	'help'   => \$help,
+) or die $!;
+
+my $in_file = shift;
+
+if ( $help || ! defined $in_file || ! -e $in_file ) {
+	my $bin = basename $0;
+	print STDERR "\nUsage: $bin [ -rename ] libraries.info > fixed.libraries.info\n\n";
+	exit;
+}
+
+=head1 examples
+
+ results for a library that's been purged
+
+ jamo fetch library HZOY
+
+/global/dna/dm_archive/sdm/illumina/00/16/96/1696.5.1537.fastq.gz PURGED 51d45e9d067c014cd6e89329
+/global/dna/dm_archive/sdm/illumina/00/16/96/1696.6.1537.fastq.gz PURGED 51d45e9e067c014cd6e8932c
+
+ jamo fetch library HZOY
+
+/global/dna/dm_archive/sdm/illumina/00/16/96/1696.5.1537.fastq.gz RESTORE_IN_PROGRESS 51d45e9d067c014cd6e89329
+/global/dna/dm_archive/sdm/illumina/00/16/96/1696.6.1537.fastq.gz RESTORE_IN_PROGRESS 51d45e9e067c014cd6e8932c
+
+ jamo fetch library HZOY
+
+/global/dna/dm_archive/sdm/illumina/00/16/96/1696.5.1537.fastq.gz RESTORED 51d45e9d067c014cd6e89329
+/global/dna/dm_archive/sdm/illumina/00/16/96/1696.6.1537.fastq.gz RESTORED 51d45e9e067c014cd6e8932c
+
+ results for a library that's still on disk
+
+ jamo info raw_normal library NGYG
+/global/dna/dm_archive/sdm/illumina/00/66/60/6660.1.50774.GTCCGC.fastq.gz BACKUP_COMPLETE 51d53aed067c014cd6f018a0
+
+ jamo info raw_normal library OGBU
+/global/dna/dm_archive/sdm/illumina/00/73/13/7313.1.67261.GACGGA.fastq.gz BACKUP_IN_PROGRESS 522d508b067c011defe7fc13
+
+ ** any other results possible ? jamo docs not clear at the moment, try
+  https://sdm-dev.jgi-psf.org:8034/doc/JAMO/overview/metadata.html
+
+=cut
+
+my %statii = ();
+$statii{ PURGED }              = 1;
+$statii{ RESTORE_IN_PROGRESS } = 1;
+
+$statii{ RESTORED }            = 0;
+$statii{ BACKUP_COMPLETE }     = 0;
+$statii{ BACKUP_IN_PROGRESS }  = 0;
+$statii{ BACKUP_READY }        = 0;
+
+my $fqs_not_live = 0;
+my %fqs          = (); # for tracking dupes
+
+open( my $fh, $in_file ) or die $!;
+
+while ( <$fh> ) {
+	my ( $id, $lib, $fq_in, @name_stuff ) = split /\t/, $_;
+	#print "id: $id\tlib: $lib\n";
+	my $cmd = "jamo fetch raw_normal library $lib";
+	print  STDERR "cmd: $cmd\n";
+	my $jamo_response = `$cmd`;
+	for my $jamo_response_line ( split /\n/, $jamo_response ) {
+
+		# use this if using 'jamo info blah blah' and conditionally call jamo fetch only if needed
+
+		# my ( $jamolib, $fq, $status, $hash ) = split /\s+/, $jamo_response_line;
+
+		my ( $fq, $status, $hash ) = split /\s+/, $jamo_response_line;
+		if ( ! defined $status || ! exists $statii{ $status } ) {
+			die "ERROR: result of $cmd unexpected -> $jamo_response_line ( $! )";
+		}
+		$fqs_not_live += $statii{ $status };
+
+		if ( $do_rename ) {
+			my $name = get_sample_name( $hash );
+			chomp @name_stuff;
+			push @name_stuff, "$name\n" if ( $name );
+		}
+		if ( ! exists $fqs{ $fq } ) {
+			print join("\t", $id, $lib, $fq, @name_stuff );
+		}
+		$fqs{ $fq }++;
+	}
+
+}
+
+if ( $fqs_not_live ) {
+	print STDERR <<EOW;
+WARNING: some fastq files are currently being restored from tape
+         to see if there's a long delay check status of "HPSS User" at
+         http://www.nersc.gov/users/live-status/
+         to see if there's a long delay
+EOW
+	exit 1;
+}
+
+sub get_sample_name {
+	my ( $hash )  = @_;
+	my $name;
+	my $cmd = "jamo show $hash |";
+	print STDERR "open pipe $cmd\n";
+	open( my $ph, $cmd ) or die "ERROR: can't open pipe $cmd $!";
+	while ( <$ph> ) { 
+		if ( /^\s+sample_name:\s/ ) {
+			s/\s+sample_name:\s//;
+			s/\s+$//;
+			s/\s/_/g;
+			$name = $_;   # **** jamo breaks if you don't read all data from the pipe, yay python
+		}
+	}
+	close( $ph ) or die "ERROR: failed closing pipe (opened with $cmd) $!";
+	return( $name );
+}
+

@@ -1,0 +1,235 @@
+#!/usr/bin/env perl
+use Modern::Perl;
+use Getopt::Long;
+use File::Basename;
+use Cwd qw/realpath/;
+use Data::Alias;
+use GT::Config;
+use GT::Jamo;
+
+use YAML qw/LoadFile DumpFile/;
+
+umask 2;
+
+my ( $bwa_dir, $ref, $rnaseq_style, $config_file, $help );
+
+$bwa_dir = 'bwa_dir';
+
+GetOptions(
+	'bwa_dir|base=s'   => \$bwa_dir,
+	'ref_fasta=s' => \$ref,
+	'rna'         => \$rnaseq_style,
+	'help'        => \$help,
+	'config=s'    => \$config_file, # for consistency
+);
+
+my $info_file = defined $config_file ? $config_file : shift;
+
+if ( $help || !defined $ref || !-f $ref || !defined $info_file || !-e $info_file ) {
+	my $bin = basename $0;
+	print STDERR <<EOH;
+
+Usage: $bin -ref /path/to/ref.fa config.info [ -base bwa_15x ]
+
+  -rna         switch to rna style naming 
+                 a) rewrites config file if given config file
+                    saves original to config.bak.#
+  -c    FILE   config file ( aka libr.info )
+               created by beta_prep_lib_info
+
+format is tab delimited
+
+proposalId_projectId  LIBR  fastq.name.fq.gz  genus  species  strain
+
+EOH
+	exit;
+}
+
+$ref = realpath $ref unless ( $ref =~ /^\// );
+
+open( my $ifh, $info_file ) or die $!;
+my @info = <$ifh>;
+close( $ifh ) || die $!;
+
+if ( $rnaseq_style ) {
+	# get uniq name for backup
+	my $suffix = '';
+	for my $i ( 1 .. 99 ) {
+		if ( ! -e "$info_file.bak.$i" ) { 
+			$suffix = "bak.$i";
+			last;
+		}
+	}
+  $suffix ||= "bak.99";
+
+  # should write temp first then rename 
+	rename( $info_file, "$info_file.$suffix" ) or die $!;
+
+	my @rna_info = ();
+	open( my $rna_fh, '>', $info_file ) or die $!;
+	for my $line ( @info ) {
+		my ( $id, $lib, @stuff ) = split /\t/, $line;
+		$id .= '_' . $lib;
+		$line = join("\t", $id, $lib, @stuff );
+		print $rna_fh $line;
+	}
+	close( $rna_fh ) or die $!;
+}
+
+my $RETRIEVING_FROM_TAPE = 0;
+
+my $SDM_ON_TAPE = 2;
+my $SDM_FILE_READY = 0;
+my $SDM_ERROR      = 1;
+
+for (@info) {
+	next if ( /^#/ );
+	next unless ( /\S/ ); # skip blanks
+	chomp;
+	my ( $pmo, $lib, $fastq, $organism ) = split /\s+/, $_, 4;
+	
+	my ( $fq_path, $fp_fq );
+
+	#
+	if ( $fastq =~ /^\// ) {
+		$fp_fq = $fastq;
+		$fastq = basename $fastq;
+	}
+  if ( !defined $fp_fq || !-e $fp_fq ) {
+    # try JAMO thingy
+    $fp_fq = jamo_fetch_fastq( $fastq );
+    if ( ! defined $fp_fq ) {
+    	warn "ERROR: cant locate $fastq with jamo";
+    	next;
+    }
+    #if ( ! -e $fp_fq ) {
+    #	# differentiate between on tape and unfound
+    #    my $status = poke_the_tape( $fp_fq);
+    #    if ( $status == $SDM_ERROR ) {
+		#    	warn "ERROR: cant locate fastq $fp_fq\n";
+    #			next;
+    #    }
+    #    elsif ( $status == $SDM_ON_TAPE) {
+    #      $RETRIEVING_FROM_TAPE = 1;
+    #      print STDERR "ON_TAPE: retrieving from tape, check with: ls -lL $fp_fq\n";
+    #    }
+    #}
+  }
+
+	print "$pmo\t$lib\t$fp_fq\t$organism\n";
+
+	if ( !-e $pmo ) {
+		makedir($pmo);
+	}
+	if ( !-e "$pmo/$bwa_dir" ) {
+		makedir("$pmo/$bwa_dir");
+	}
+	if ( !-e "$pmo/fastq_dir" ) {
+		makedir("$pmo/fastq_dir");
+	}
+
+	if ( ! -l "$pmo/fastq_dir/$fastq" ) {
+		symlink( $fp_fq, "$pmo/fastq_dir/$fastq" ) or die "can't symlink( $fp_fq, $pmo/fastq_dir/$fastq ) $!";
+	}
+
+	# create or update config.yml
+
+	my $config_file = "$pmo/$bwa_dir/config.yml";
+	my $config;
+
+	if ( -e $config_file ) {
+		$config = LoadFile( $config_file );
+	}
+
+	$config->{ref_fasta} = $ref;
+	if ( -e "$ref.fai" ) {
+		$config->{ref_faidx} = "$ref.fai";
+	}
+
+	my $rg_id = $fastq;
+	$rg_id =~ s/.fastq.gz$//;
+	$rg_id =~ s/.fq.gz$//;
+
+	alias my %config_fqs = %{ $config->{fqs} };
+
+	$config_fqs{ $fastq }->{src_path}       = $fp_fq;
+	$config_fqs{ $fastq }->{library}        = $lib;
+	$config_fqs{ $fastq }->{organism}       = $organism;
+	$config_fqs{ $fastq }->{rg_sample_name} = $pmo;
+	$config_fqs{ $fastq }->{rg_id}          = $rg_id;
+
+	DumpFile( $config_file, $config )
+}
+sub try_get_seq_location{
+  my ( $fastq ) = @_;
+  my $fastq_base = basename $fastq;
+  my $cmd = "get_seq_location $fastq_base";
+  my $gsl_fastq;
+	#print STDERR "in try_get_seq_location calling cmd: $cmd\n";
+
+  for my $response_line ( split /\n/, `$cmd`) {
+		#print STDERR "result from cmd: $response_line\n";
+  	next if ( $response_line =~ /^#/ );
+  	$gsl_fastq = ( split /,/, $response_line  ) [ -1 ];
+		my $gsl_fastq_basename = basename $gsl_fastq;
+  	last if ( $fastq_base eq $gsl_fastq_basename ) ;
+  }
+  return $gsl_fastq;
+}
+#	Sorry file: 10.5.9.fastq.gz has been purged and is on tape, a request has been made to restore it.# Try to run this again in a little
+#1 illumina library : 1 fastq file(s)
+#  FUFX:  1 file(s):
+#        FUFX.10.5.9.fastq
+#
+#get_seq_data.pl -seq-unit 2300.1.1858.CTTGTA.fastq.gz
+#Log4perl: Seems like no initialization happened. Forgot to call init()?
+#Sequencing techology for 2300.1.1858.CTTGTA.srf is Illumina
+#Sequence data download SUCCESS!
+#1 illumina library : 1 fastq file(s)
+#  CPHG:  1 file(s):
+#        CPHG.2300.1.1858.CTTGTA.fastq
+sub poke_the_tape {
+	my ( $fastq ) = @_;
+	my $fastq_base = basename $fastq;
+	
+	my $return_code;
+	my $cmd = "get_seq_data.pl -seq-unit $fastq_base";
+	#print STDERR "in poke_the_tape calling cmd : $cmd\n";
+	my $result = `$cmd`;
+	#print STDERR "result from cmd: $result\n";
+	if ( $result =~ /^Sorry/) { # restoring from tape
+		$return_code = $SDM_ON_TAPE;
+	}
+	elsif ( $result && $result =~ /SUCCESS/ ) {
+		$return_code = $SDM_FILE_READY;
+	}
+	else {
+		$return_code = $SDM_ERROR;
+	}
+# cleanup cruft created
+  for my $file ( qw/get_seq_data.inventory SEQ_METADATA.txt README.txt/ ) {
+		my $seconds_old = ( -M $file ) * 60 * 60 * 24;
+		if ( -e $file && $seconds_old < 60 ) { 
+			unlink $file;
+		}
+	}
+	return( $return_code );
+}
+
+sub makedir {
+	my ($dir) = @_;
+	mkdir $dir or die "can't mkdir $dir $!";
+	chmod 02775, $dir or die "can't chmod 02775 $dir $!";
+}
+
+__END__
+300661_407541	ITGZ	2341.6.1879.ATGTCA.fastq.gz	Populus trichocarpa BESC-416
+300661_407542	ITGU	2341.6.1879.CCGTCC.fastq.gz	Populus trichocarpa BESC-426
+300661_407543	ITGH	2341.6.1879.GTAGAG.fastq.gz	Populus trichocarpa BESC-428
+300661_407544	ITBW	2341.6.1879.GTCCGC.fastq.gz	Populus trichocarpa BESC-431
+300661_407549	ITGY	2341.7.1879.GAGTGG.fastq.gz	Populus trichocarpa BESC-446
+300661_407550	ITBN	2341.7.1879.GGTAGC.fastq.gz	Populus trichocarpa BESC-447
+300661_407551	ITAT	2341.7.1879.ACTGAT.fastq.gz	Populus trichocarpa BESC-456
+300661_407552	ITBT	2341.7.1879.ATGAGC.fastq.gz	Populus trichocarpa BESC-459
+300661_407553	ISTI	2341.1.1879.ATTCCT.fastq.gz	Populus trichocarpa BESC-461
+300661_407554	ISUB	2341.1.1879.CAAAAG.fastq.gz	Populus trichocarpa BESC-464
