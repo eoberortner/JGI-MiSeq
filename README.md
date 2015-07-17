@@ -1,5 +1,6 @@
 # JGI-MiSeq
-An automated pipeline to convert MiSeq reads into an informative HTML representation.
+
+An automated pipeline for NERSC to convert raw Illumina MiSeq reads into an informative HTML representation.
 
 ## Step I: Setup Environment
 ```
@@ -109,4 +110,12 @@ The resulting HTML pages also provide links the XML files that can be nicely vie
 IGV must be downloaded and installed locally.
 
 
-  
+## NOTE!
+
+Currently, the MiSeq pipeline is implemented for JGI's NERSC system. In order to execute the pipeline on a general UNIX system, various modifications must be performed (e.g. directory names, path information) and 
+dependencies must be installed (e.g biopython, GATK, SAMtools). 
+
+The ```lib/``` and ```python/``` directories contain the pipeline's dependencies, helping to deploy the pipeline on a general UNIX system more easily.
+
+Please contact eoberortner@lbl.gov for further information and in case of questions!
+   
