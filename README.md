@@ -1,7 +1,7 @@
 # JGI-MiSeq
 An automated pipeline to convert MiSeq reads into an informative HTML representation.
 
-## Step I: setup environment
+## Step I: Setup Environment
 ```
 source bin/env.reseq.sh
 ```
@@ -34,7 +34,7 @@ must be retrieved from the database using the following command:
 jamo_temp_libinfo_fix pre.libraries.info > libraries.info
 ```
 
-## Step III: reference sequence(s)
+## Step III: Reference Sequence(s)
 
 In the library's directory, create a sub-directory in that all files of the reference sequences are stored.
 
@@ -63,14 +63,27 @@ structure for each sub-library. The ```beta_prep_setup_dirs``` receives the info
 from the ```libraries.info``` file.
 
 ```
-beta_prep_setup_dirs -ref ref/<sequences>.fasta -rna -c libraries.info
+beta_prep_setup_dirs -ref ref/<reference-sequences>.fasta -rna -c libraries.info
 ```
 
+Currently, it is unclear why to execute the ```beta_slice_fq``` script.
+ 
 ```
 beta_slice_fq -config libraries.info
 ```
 
+The ```beta_slice_fq``` script submits jobs and, hence, we need to wait until all jobs were executed properly. 
+On NERSC, the ```qstat``` command enables to check the status of the submitted jobs.
+
+Lastly, the sequenced sequences are aligend with the reference sequences and the .bam files, which contain 
+the aligned reads (in binary format) are generated. 
+ 
 ```
 beta_run_alignments -c libraries.info
 ```
- 
+
+Again, the ```beta_run_alignments``` script submits jobs and we need to wait until all jobs were executed 
+before proceeding.
+
+## Step V: Generate HTML Representation
+  
