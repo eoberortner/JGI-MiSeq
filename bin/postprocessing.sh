@@ -53,16 +53,16 @@ do
     fi
 
     ## DEPTH OF COVERAGE
-#    java -jar ${LIB_DIR}/GenomeAnalysisTK.jar -T DepthOfCoverage -R ${REF_SEQ} -I ${POOL_NAME}/bwa_dir/aligned_reads.bam -o ${POOL_NAME}/bwa_dir/covdepth
+    java -jar ${LIB_DIR}/GenomeAnalysisTK.jar -T DepthOfCoverage -R ${REF_SEQ} -I ${POOL_NAME}/bwa_dir/aligned_reads.bam -o ${POOL_NAME}/bwa_dir/covdepth
 
     ## VCF
-#    java -jar ${LIB_DIR}/GenomeAnalysisTK.jar -T UnifiedGenotyper -R ${REF_SEQ} -I ${POOL_NAME}/bwa_dir/aligned_reads.bam -glm BOTH --max_deletion_fraction 0.55 -o ${POOL_NAME}/bwa_dir/snps.gatk.vcf -nt 8
+    java -jar ${LIB_DIR}/GenomeAnalysisTK.jar -T UnifiedGenotyper -R ${REF_SEQ} -I ${POOL_NAME}/bwa_dir/aligned_reads.bam -glm BOTH --max_deletion_fraction 0.55 -o ${POOL_NAME}/bwa_dir/snps.gatk.vcf -nt 8
 
     ## CALLABLE
-#    java -jar ${LIB_DIR}/GenomeAnalysisTK.jar -T CallableLoci -R ${REF_SEQ} -I ${POOL_NAME}/bwa_dir/aligned_reads.bam -summary ${POOL_NAME}/call_summary.txt -o ${POOL_NAME}/bwa_dir/callable.bed
+    java -jar ${LIB_DIR}/GenomeAnalysisTK.jar -T CallableLoci -R ${REF_SEQ} -I ${POOL_NAME}/bwa_dir/aligned_reads.bam -summary ${POOL_NAME}/call_summary.txt -o ${POOL_NAME}/bwa_dir/callable.bed
 
     ## CALL SUMMARY
-#    python ${PYTHON_DIR}/make_calls_gatk.py --reffile ${REF_SEQ} --vcffile ${POOL_NAME}/bwa_dir/snps.gatk.vcf --covfile ${POOL_NAME}/bwa_dir/covdepth > ${POOL_NAME}/bwa_dir/call_summary.txt
+    python ${PYTHON_DIR}/make_calls_gatk.py --reffile ${REF_SEQ} --vcffile ${POOL_NAME}/bwa_dir/snps.gatk.vcf --covfile ${POOL_NAME}/bwa_dir/covdepth > ${POOL_NAME}/bwa_dir/call_summary.txt
 
 done
 
@@ -87,7 +87,6 @@ cp -r ${LIBRARY_DIR}/${LIBRARY_NAME}/results ${WEB_DIR}/${LIBRARY_NAME}/results
 cp -r ${LIBRARY_DIR}/${LIBRARY_NAME}/config.xml ${WEB_DIR}/${LIBRARY_NAME}/config.xml
 
 
-## TODO:
 ## for every library, copy the aligned_reads.bam, aligned_reads.bam.bai, call_summary.txt, callable.bed, snps.gatk.vcf, and snps.gatk.vcf.idx 
 ## into the $WEB_DIR
 
