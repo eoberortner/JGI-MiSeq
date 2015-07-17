@@ -58,5 +58,19 @@ prep_ref -index ref/<reference-sequences>.fasta
 
 ## Step IV: Sequence Alignment
 
-In this step, the sequenced sequences are aligned with the reference sequences.
+In this step, the sequenced sequences are aligned with the reference sequences. First, generate a directory 
+structure for each sub-library. The ```beta_prep_setup_dirs``` receives the information about the sub-libraries 
+from the ```libraries.info``` file.
+
+```
+beta_prep_setup_dirs -ref ref/<sequences>.fasta -rna -c libraries.info
+```
+
+```
+beta_slice_fq -config libraries.info
+```
+
+```
+beta_run_alignments -c libraries.info
+```
  
