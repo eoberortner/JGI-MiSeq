@@ -66,7 +66,7 @@ from the ```libraries.info``` file.
 beta_prep_setup_dirs -ref ref/<reference-sequences>.fasta -rna -c libraries.info
 ```
 
-Currently, it is unclear why to execute the ```beta_slice_fq``` script.
+Currently, it is unclear what the ```beta_slice_fq``` script does and why it is needed.
  
 ```
 beta_slice_fq -config libraries.info
