@@ -85,5 +85,28 @@ beta_run_alignments -c libraries.info
 Again, the ```beta_run_alignments``` script submits jobs and we need to wait until all jobs were executed 
 before proceeding.
 
-## Step V: Generate HTML Representation
+## Step V: Generate HTML Representation ("Post-Processing")
+
+When having the aligned reads (encoded in .bam files) for each sub-library, we generate an HTML representation 
+of the sequencing results. Representing the sequencing results in HTML is a user-friendly and easy-accessible 
+way to show the results to biologists.
+
+We created a script that combines multiple steps to generate the HTML page and the sequencing results. 
+
+```
+postprocessing.sh <library-name> <reference-sequence>
+```
+
+Example:
+```
+postprocessing.sh AAONP ref/my_references.fasta
+```
+
+The ```postprocessing.sh``` script utilizes Java (>1.7), Python (2.7), SAMtools (http://www.htslib.org), and BROAD's Genome Analysis Toolkit (GATK) (https://www.broadinstitute.org/gatk/).
+Currently, the ```postprocessing.sh``` script is implemented for NERSC and utilizes NERSC's module system (```module load```). 
+
+The resulting HTML pages also provide links the XML files that can be nicely viewed in the Integrative Genomics Viewer (IGV), developed by the BROAD institute (https://www.broadinstitute.org/software/igv/). 
+IGV must be downloaded and installed locally.
+
+
   
