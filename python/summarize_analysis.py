@@ -37,82 +37,87 @@ jobfiles = {
 
 ''' Functions '''
 def igv_xml(genome,resources):
-  resstr = ''
-  for path,name in resources:
-    resstr += '    <Resource path="%s" name="%s"/>\n' % (path,name)
-  return IGVXML % {'resources':resstr,'genome_url':genome}
+    resstr = ''
+    
+    for path,name in resources:
+        resstr += '    <Resource path="%s" name="%s"/>\n' % (path,name)
+    
+    return IGVXML % {'resources':resstr,'genome_url':genome}
 
 from urlparse import urljoin
 
 def alias_filename(filename,fspath=FSPATH,urlpath=URLPATH):
-  return filename.replace(fspath,urlpath)
+    return filename.replace(fspath,urlpath)
 
 def mkdir_p(path):
-  if not os.path.exists(path): os.mkdir(path)
+    if not os.path.exists(path): os.mkdir(path)
 
 if __name__=='__main__':
-  omask = os.umask(002)
-  fh = args.conffile
-  parser = etree.XMLParser(remove_blank_text=True)
-  tree = etree.parse(fh,parser)
-  root = tree.getroot()
-  assert root.tag == 'SBAnalysis', "ERROR: Root tag is not SBAnalysis"
-  assert len(root.getchildren())==1, "ERROR: Only one analysis can be migrated"
-  analysis = root[0]
-  assert analysis.tag == 'analysis', "ERROR: incorrect analysis tag"
+    omask = os.umask(002)
+    fh = args.conffile
+    parser = etree.XMLParser(remove_blank_text=True)
+    tree = etree.parse(fh,parser)
+    root = tree.getroot()   
+    assert root.tag == 'SBAnalysis', "ERROR: Root tag is not SBAnalysis"
+    assert len(root.getchildren())==1, "ERROR: Only one analysis can be migrated"
+    analysis = root[0]
+    assert analysis.tag == 'analysis', "ERROR: incorrect analysis tag"
 
-  adir = os.path.join(analysis.attrib['location'],analysis.attrib['name'])
-  print adir
-  assert os.path.exists(adir), "Analysis directory does not exist!"
+    adir = os.path.join(analysis.attrib['location'],analysis.attrib['name'])
+    ## print adir
+    assert os.path.exists(adir), "Analysis directory does not exist!"
 
-  reffile = analysis.attrib['reference']
-  assert os.path.exists(reffile), "Reference file does not exist!"
-  refurl = alias_filename(reffile)
+    reffile = analysis.attrib['reference']
+    assert os.path.exists(reffile), "Reference file does not exist!"
+    refurl = alias_filename(reffile)
 
-  try:
-    #--- Setup analysis results directory  
-    resultdir = os.path.join(adir,'results')
-    mkdir_p(resultdir)
+    try:
+        #--- Setup analysis results directory  
+        resultdir = os.path.join(adir,'results')
+        mkdir_p(resultdir)
 
-    reflens = [(s.id,len(s)) for s in SeqIO.parse(analysis.attrib['reference'],'fasta')]
-    refnames = [r[0] for r in reflens]
-    poollist = [pool.attrib['name'] for pool in analysis]
+        reflens = [(s.id,len(s)) for s in SeqIO.parse(analysis.attrib['reference'],'fasta')]
+        refnames = [r[0] for r in reflens]
+        poollist = [pool.attrib['name'] for pool in analysis]
   
-    #--- Make the IGV files
-    igvurls = {}
-    for pool in analysis:
-      pool_resources = []
-      pdir = os.path.join(adir,pool.attrib['name'])
-      for job in pool:
-        jdir = os.path.join(pdir,job.attrib['name'])
-        for f,rname in jobfiles[job.attrib['protocol']]:
-          resource_file = os.path.join(jdir,f)
-          if os.path.exists(resource_file):
-            pool_resources.append((alias_filename(resource_file),'%s_%s' % (job.attrib['protocol'],rname)))
-      igvfile = os.path.join(resultdir,'%s.igv.xml' % pool.attrib['name'])
-      with open(igvfile,'w') as outh:
-        print >>outh, igv_xml(refurl,pool_resources)
-      igvurls[pool.attrib['name']] = alias_filename(igvfile)
+        #--- Make the IGV files
+        igvurls = {}
+        for pool in analysis:
+            pool_resources = []
+            pdir = os.path.join(adir,pool.attrib['name'])
+            for job in pool:
+                jdir = os.path.join(pdir,job.attrib['name'])
+                for f,rname in jobfiles[job.attrib['protocol']]:
+                    resource_file = os.path.join(jdir,f)
+                    if os.path.exists(resource_file):
+                        pool_resources.append((alias_filename(resource_file),'%s_%s' % (job.attrib['protocol'],rname)))
+      
+        igvfile = os.path.join(resultdir,'%s.igv.xml' % pool.attrib['name'])
+        with open(igvfile,'w') as outh:
+            print >>outh, igv_xml(refurl,pool_resources)
+            
+        igvurls[pool.attrib['name']] = alias_filename(igvfile)
 
-    #--- Summarize calls
-    calltable = merge_calls(analysis,reflens,poollist)
-    bestbets = best_calls(calltable)
+        #--- Summarize calls
+        calltable = merge_calls(analysis,reflens,poollist)
+        bestbets = best_calls(calltable)
 
 ###################
-##    #--- Create the excel file
-##    excelfile = os.path.join(resultdir,'%s.xlsx' % analysis.attrib['name'])
-##    create_result_workbook(refnames,poollist,calltable,bestbets,excelfile)
+        #--- Create the excel file
+        excelfile = os.path.join(resultdir,'%s.xlsx' % analysis.attrib['name'])
+        create_result_workbook(refnames,poollist,calltable,bestbets,excelfile)
 ###################
     
-    #--- Make the index.html file
-    htmlfile = os.path.join(adir,'index.html')
-    with open(htmlfile,'w') as outh:
-      print >>outh, make_index(analysis,URLPATH,reflens,calltable,bestbets)
+        #--- Make the index.html file
+        htmlfile = os.path.join(adir,'index.html')
+        with open(htmlfile,'w') as outh:
+            print >>outh, make_index(analysis,URLPATH,reflens,calltable,bestbets)
 
-  except (IOError,OSError) as e:
-    if e.args[1] == 'Read-only file system':
-      sys.exit('Destination "%s" is mounted as read-only.' % args.destination)
-    else: raise
-  finally:
-    os.umask(omask)
+    except (IOError,OSError) as e:
+        if e.args[1] == 'Read-only file system':
+            sys.exit('Destination "%s" is mounted as read-only.' % args.destination)
+        else: raise
+  
+    finally:
+        os.umask(omask)
 

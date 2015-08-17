@@ -17,14 +17,13 @@ class RQCInvoker(object):
     SUPPORTED_FUNCTIONS = {'library':'library/info'}
     
     @staticmethod
-    def loadLibrary(libraryName):
+    def loadLibraryInfo(libraryName):
         
         REQUEST_URL = '{}/{}/{}'.format(RQCInvoker.RQC_API_URL, RQCInvoker.SUPPORTED_FUNCTIONS['library'], libraryName)
         
         ## send the request to the URL above
         r = requests.get(REQUEST_URL)
         if r.status_code == 200:
-            
             libraryInfo = json.loads(r.content)
             if "library_info" in libraryInfo:
                 if "pooled_list" in libraryInfo["library_info"]:
@@ -33,6 +32,20 @@ class RQCInvoker(object):
         return None
         
         
+    @staticmethod
+    def getSubLibraryNames(libraryName):
+        
+        REQUEST_URL = '{}/{}/{}'.format(RQCInvoker.RQC_API_URL, RQCInvoker.SUPPORTED_FUNCTIONS['library'], libraryName)
+        
+        ## send the request to the URL above
+        r = requests.get(REQUEST_URL)
+        if r.status_code == 200:
+            libraryInfo = json.loads(r.content)
+
+            if "library_info" in libraryInfo and "pooled_list" in libraryInfo["library_info"]:                    
+                return [pool['library_name'] for pool in libraryInfo["library_info"]["pooled_list"]]
+        
+        return None
         
         
         
