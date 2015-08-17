@@ -1,0 +1,98 @@
+#!/usr/bin/env perl
+#!/jgi/tools/bin/perl
+use Modern::Perl;
+use File::Basename;
+use Statistics::Descriptive;
+use Getopt::Long;
+
+#my $jgi_tools_bin_dir = '/jgi/tools/bin';
+#my $reseq_bin_dir     = '/jgi/tools/groups/gentech/phoebetest/bin';
+
+umask 2;
+
+my $region = '';
+GetOptions( 
+	'region=s' => \$region,
+);
+
+my $stat = Statistics::Descriptive::Sparse->new();
+
+my $bam = shift;
+if ( ! defined $bam || ! -e $bam ) {
+  # uh, or bam ne '-'
+  my $bin = basename $0;
+  print STDERR "\n$bin [ -region ChrX:1-3 ] my.bam > my.depth.avg\n\n";
+  exit;
+}
+
+my ( $length, $bases );
+my $hpipe_cmd = "samtools view -H $bam |";
+open( my $hh, $hpipe_cmd ) or die "can't open pipe $hpipe_cmd $!";
+
+my %ctgs = ();
+while ( <$hh> ) {
+  if ( /^\@SQ/ ) {
+    my ($clength, $cname );
+    for my $tag ( split ) {
+      if ( $tag =~ /^SN:/ ) {
+        $tag =~ s/^SN://;
+        $cname = $tag;
+      }
+      elsif ( $tag =~ /^LN:/ ) {
+        $tag =~ s/^LN://;
+        $clength = $tag;
+      }
+    }
+    $ctgs{ $cname } = $clength;
+    $length += $clength;
+  }
+}
+close( $hh ) or die "can't close pipe after reading ( $hpipe_cmd ) $!";
+
+# my %depths = ();
+
+if ( $region ) { # if working move to avoid header parsing if region supplied
+	my ( $ctg, $from, $to ) = split /[:-]/, $region;
+  $length = defined $to ? $to - $from + 1 : $ctgs{ $ctg };
+}
+
+my $reg_option = $region ? " -r $region " : '';
+my $depth_cmd  = "samtools depth $reg_option -q 0 -Q 0 $bam  |" ;
+open( my $bh, $depth_cmd ) or die "can't open pipe $depth_cmd $!";
+
+my $i = 0;
+my @d = ();
+
+$#d   = 999;
+
+while ( <$bh> ) {
+  my ( $ctg, $depth ) = ( split ) [ 0, -1 ];
+  $bases += $depth;
+
+  if ( $i && ! ( $i % 1000 ) ){
+    $i = 0; 
+    $stat->add_data( @d );
+  }
+  $d[ $i ] = $depth;
+  $i++;
+}
+
+$stat->add_data( @d[ 0 .. $i - 1 ] );
+
+# printf("scalar:%0.02f\tsd:%0.02f\t%0.02f\n", $bases/$length, $stat->mean, $stat->standard_deviation);
+
+# adding missing length
+
+my $to_add = $length - $stat->count;
+
+while ( $to_add > 0 ) {
+  # keeping memory in check,35 million 0s is about 2gb and takes about 1/2 min to add
+  my $chunk = 35000000;
+  my $zeroes = $to_add > $chunk ? $chunk : $to_add;
+  $to_add -= $zeroes;
+  @d = ( 0 ) x $zeroes;
+  $stat->add_data(@d);
+}
+
+printf("mean_depth: %0.02f\tsd: %0.02f\n",  $stat->mean, $stat->standard_deviation);
+

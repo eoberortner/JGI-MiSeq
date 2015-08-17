@@ -1,0 +1,58 @@
+#!/bin/sh
+
+
+usage() {
+    echo "Usage: postprocessing.sh LIBRARY_NAME REF_FASTA"
+}
+
+if [ "$#" -eq 2 ]; then
+
+    export _JAVA_OPTIONS="-Xmx2G"
+    module load oracle-jdk
+
+    module load python/2.7.4
+    module load biopython
+
+    LIBRARY_DIR=/global/scratch2/sd/synbio/sequencing/illumina/tests
+    LIBRARY_NAME=$1
+    if ! [ -d ${LIBRARY_DIR}/${LIBRARY_NAME} ]; then
+        echo "${LIBRARY_DIR}/${LIBRARY_NAME} does not exist."
+    fi
+
+    REF_FASTA=$2
+    REF_SEQ=${LIBRARY_DIR}/${LIBRARY_NAME}/${REF_FASTA}
+    if ! [ -f ${REF_SEQ} ]; then
+        echo "${REF_SEQ} does not exist."
+    fi
+
+    ## LOAD MODULES
+    export _JAVA_OPTIONS="-Xmx2G"
+    module load oracle-jdk
+
+    module load python
+    module load biopython
+
+    HOME_DIR=/global/homes/s/synbio
+    SEQUENCING_DIR=${HOME_DIR}/sequencing
+
+    export LIB_DIR=${SEQUENCING_DIR}/lib
+    export PYTHON_DIR=${SEQUENCING_DIR}/git/JGI-MiSeq/python
+    export PATH=$PATH:${LIB_DIR}/dnassemble-jgi/bin/
+
+    export LIBRARY_DIR=`echo $LIBRARY_DIR`
+    export REF_SEQ=`echo $REF_SEQ`
+
+    export URL_PATH=http://synbio.jgi-psf.org:8077/analysis
+
+    if ! [ -d ${LIBRARY_DIR}/${LIBRARY_NAME}/tmp ]; then
+        mkdir ${LIBRARY_DIR}/${LIBRARY_NAME}/tmp
+    else
+        rm -Rf ${LIBRARY_DIR}/${LIBRARY_NAME}/tmp/*
+    fi
+    export OUTPUT_DIR=${LIBRARY_DIR}/${LIBRARY_NAME}/tmp/
+else
+
+    usage
+
+fi
+
