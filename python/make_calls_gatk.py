@@ -11,7 +11,6 @@ parser.add_argument('summary', nargs='?', type=argparse.FileType('w'), default=s
 
 args = parser.parse_args()
 
-import json
 from Bio import SeqIO
 from postanalysis.covvars import parse_covdepth_gatk, find_variants
 from postanalysis.variant import Variant
@@ -27,7 +26,14 @@ class Reference:
     
     def make_call(self,seq):
         if self.pct_cov < 1.0: return "Incomplete"
-        if self.mean_cov < 5.0: return "Low coverage"
+        
+        ## changed from 5.0 to 100.0
+        ## CHANGE: 08/25/15    -- Ernst Oberortner
+        ## changed threshold from 5.0 to 100.0
+        ## old: 
+        ## if self.mean_cov < 5.0: return "Low coverage"
+        ## new:
+        if self.mean_cov < 100.0: return "Low coverage"
         if not self.variants and not self.dips: return "Pass"
         
         result = runGD(inputGD(self.name, self.variants+self.dips, seq))
@@ -49,12 +55,19 @@ sdict = dict((ref,Reference(name=ref)) for ref,seq in seqs)
 covdata = parse_covdepth_gatk(args.covfile)
 for ref,seq in seqs:
     result = find_variants(covdata[ref], seq, ref, exclude_edges=True, exclude_overlaps=True)
+
     sdict[ref].pct_cov = result['pct_cov']
     sdict[ref].mean_cov = result['mean_cov']  
     if 'variants' in result:
         for v in result['variants']:
             v.caller = 'covvars'
-            sdict[ref].dips.append(v)
+            
+            ## CHANGE: 08/26/15    -- Ernst Oberortner
+            ## old: variants are added to the dips list
+            ## sdict[ref].dips.append(v)
+            ## 
+            ## new: variants are added to the variants list 
+            sdict[ref].variants.append(v)
 
 ''' Analyze variants '''
 vlines = [l.strip('\n') for l in open(args.vcffile,'rU') if not l.startswith('#')]
