@@ -1,0 +1,591 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use Data::Alias;
+use Data::Dumper;
+use Getopt::Long;
+use File::Basename;
+use LWP::UserAgent;
+use JSON::XS;
+
+###
+# TODO:
+#
+# check current state, do not update Complete projects
+#   or betters et 'In Progress' only projects that are 'Created'
+#   only set 'Complete' projects that are 'In Progress'
+#
+# multisample isn't always a task, we do get single sample projects
+#
+# for multisample reports that involve samples from previously analyzed thingies how are the previously analysis task id projects handled?
+#
+# output created & awaiting review is potentially very annoying, seems like makework when we need to rerun something.
+# 
+# task types
+# http://proposals.jgi-psf.org/pmo_webservices/analysis_task_types
+#
+# analysis strategies with analysis tasks
+# http://proposals.jgi-psf.org/pmo_webservices/analysis_tasks_per_strategies
+#
+# fd product tree, each has sproduct and aproduct, each aproduct has list of analysis tasks
+# http://proposals.jgi-psf.org/pmo_webservices/product_catalog
+#
+###
+
+# *** get a list of debug analysis task ids from
+# http://wip-stage.jgi-psf.org/pmo_webservices/analysis_tasks/awaiting?analysis_task_state=Created&analysis_task_type=Structural+Variant+Analysis
+# or whatever task type
+
+my %urls = ( 
+	state_transition      => 'jgi-psf.org/pmo_webservices/analysis_task/ATID_PLACEHOLDER/state_transition',
+	analysis_tasks_spid   => 'jgi-psf.org/pmo_webservices/analysis_tasks?sequencing_project_id=',
+	analysis_task         => 'jgi-psf.org/pmo_webservices/analysis_task/',
+	its_project           => 'jgi-psf.org/pmo_webservices/its_project/',
+);
+sub set_urls { 
+	my ( $urls_ref, $server ) = @_;
+	while ( my ( $key, $url ) = each %$urls_ref ) {
+		$$urls_ref{$key} = "https://$server.$url";
+	}
+}
+sub set_atid_url {
+	my ( $at_id, $url ) = @_;
+	$url =~ s/ATID_PLACEHOLDER/$at_id/; 
+	return( $url );
+}
+
+my %status_map = ( 
+  'created'   => { 
+		text => 'Created',
+		id   => 1,
+	},
+	'available' => {
+		text => 'Data Available',
+		id   => 5,
+	},
+	'started'   => {
+		text => 'In Progress',
+		id   => 6,
+	},
+	'thinking'  => {
+		text => 'Output Created and Awaiting Review',
+		id   => 8,
+	},
+	'complete'  => {
+		text => 'Complete',
+		id   => 9,
+	},
+	'abandoned' => {
+		text => 'Abandoned',
+		id   => 10,
+	},
+	'hold'      => {
+		text => 'On Hold',
+		id   => 12,
+	},
+	'deleted'   => {
+		text => 'Deleted',
+		id   => 13,
+	},
+);
+
+# typeable names for analysis types
+#        29,
+#        "Resequencing, Population Analysis",
+#        "Y"
+#        28,
+#        "Resequencing, SNP/indel Detection",
+#        "Y"
+#        30,
+#        "Resequencing, Skim Analysis",
+#        "Y"
+my %type_map = ( 
+  'sv' => {
+		text => 'Structural Variant Analysis',
+		id   => 43,
+	},
+	'msv' => {
+		text => 'Structural Variant Merged Report',
+		id   => 46,
+	},
+  'snp' => {
+		text => 'Small Variant Analysis',
+		id   => 42,
+	},
+	'snp_old' => {
+		text => 'Resequencing, SNP/indel Detection',
+		id   => 28,
+	},
+	'skim' => {
+		text => 'Resequencing, Skim Analysis',
+		id   => 30,
+	},
+	'pop'  => {
+		text => 'Resequencing, Population Analysis',
+		id   => 29,
+	},
+	'msnp' => {
+		text => 'Small Variant Merged Report',
+		id   => 45,
+	},
+  'map' => {
+		text => 'Mapping to Reference',
+		id   => 44,
+	},
+	'portal' => {
+		text => 'Portal Creation',
+		id   => 41,
+	},
+);
+
+# login name to 'cid' (Contacts database ID, from jgi single sign on, http://contacts.jgi-psf.org ) 
+
+my %user_map = ( 
+	'synbio' => 1817,
+  'annau'    => 3405,
+  'njohnson' => 18389,
+  'wendys'   => 1816,
+	'vasanth'  => 11492,
+);
+
+my ( $cid, $state, $spid, $atid, $type, $apid, @fdids, @spids, @apids, @atids, $fdid, $view, $set, $config_file, $debug, $verbose, $help );
+
+$debug = 0;
+$Data::Dumper::Terse  = 1;
+$Data::Dumper::Indent = 1;
+
+GetOptions( 
+	'jid=i'   => \$cid,
+	'config=s'=> \$config_file,
+	'state=s' => \$state,
+	'spid:i{,}'  => \@spids,
+	'atid:i{,}'  => \@atids,
+	'apid:i{,}'  => \@apids,
+	'fdid:i{,}'  => \@fdids,
+	'type=s'  => \$type,
+	'view'    => \$view,
+	'set'     => \$set,
+	'debug!'  => \$debug,
+	'verbose' => \$verbose,
+	'help'    => \$help,
+) or die $!;
+
+my ( $arg ) = shift;
+
+if ( defined $arg )  {
+	if ( $arg eq 'view' ) { $view++ } 
+	elsif ( $arg eq 'set' ) { $set++ }
+}
+if ( $help 
+   || ( ! $view && ! $set ) 
+   || ( $set && ( ! defined $type || ! exists $type_map{ $type }  || ( ! defined $state || ! exists $status_map{ $state } ) ) )
+   || ( ! @atids && ! @apids && ! @spids && @fdids && ! @fdids && ( ! defined $config_file || ! -e $config_file ) ) ) {
+
+	my $bin = basename $0;
+	print STDERR<<EOH;
+
+  view or set analysis task stuff
+
+Usage: $bin view -spid SPID1 SPID2 ...
+       $bin set -state started -type sv -fdid FDID1 FDID2 ...
+
+Options: 
+
+  view or set
+
+  -config FILE    libraries.info file, or anything with id 1 per line
+                  * if using this, ids by default interpreted as FDID
+                    unless overridden by something I haven't decided
+                    on yet
+  -spid   INT     sequencing project id
+  -fdid   INT     final deliverable project id
+  -atid   INT     analysis task id
+  -apid   INT     analysis project id
+  -jid    INT     id of user [ auto set normally or defaults to eoberort ]
+
+  -debug          use wip-stage server
+  -verbose        be loud
+
+  -state  STRING  state to transition to
+  -type   STRING  type of analysis
+
+  -type must be one of these
+
+    sv   ( 'Structural Variant Analysis' )
+    snp  ( 'Small Variant Analysis' )
+    map  ( 'Mapping to Reference'   )
+
+  -state must be one of these ( value set listed in parens )
+
+    -- first 3 set by "pipeline" aka analysts
+    started   ( "In Progress" )
+    thinking  ( "Output Created and Awaiting Review" )
+    complete  ( "Complete" )
+
+    -- states below set by mysterious entity
+    created   ( "Created" )
+    available ( "Data Available" )
+    abandon   ( "Abandoned" )
+    hold      ( "On Hold" )
+    deleted   ( "Deleted" )
+
+============ reseq stuff ============
+
+started for map happens in 'run_alignments'
+started for snp happens in 'call_snps'
+started for sv  happens in 'run_breakdancer'
+
+completed for all happens in 'portal_prep'
+
+EOH
+
+	exit;
+}
+
+my $server          = $debug ? 'wip-stage' : 'proposals';
+my $magical_success = 204;
+my $ua              = get_ua();
+
+$verbose++ if ( $debug );
+
+set_urls( \%urls, $server );
+
+# testin
+#list_tasks( $ua,  1019968 );
+#exit;
+if ( $config_file ) { 
+	my $id_ref = @fdids ? \@fdids
+             : @spids ? \@spids
+             : @atids ? \@atids
+             : @apids ? \@apids
+             : \@fdids;
+
+	# case where -spid|-fpid... given just to inform type of ids in file
+ 	if ( defined $$id_ref[ 0 ] && $$id_ref[ 0 ] == 0 ) {
+		shift @$id_ref;
+	}
+
+	push @$id_ref, parse_config( $config_file );
+}
+
+if ( $view ) { 
+	for my $id ( @fdids, @spids, @apids ) {
+		view_an_id( $id );
+	}
+	for my $id ( @atids ) {
+		view_an_id( $id, { id_type => 'atid' });
+	}
+}
+elsif ( $set ) { 
+	if ( ! exists $status_map{ $state } ) { 
+		die "I don't understand status $state\n";
+	}
+	$type = $type_map{ $type }->{text};
+	if ( @fdids ) { 
+		for my $fdid ( @fdids ) { 
+			push @spids, fdid_to_spid( $ua, $fdid );
+		}
+	}
+	for my $spid ( @spids ) {
+		my $res = set_at_state( $ua, get_at_id( $ua, $spid, $type ), $status_map{ $state }->{id}, user_to_cid() );
+
+		if ( $res->code eq $magical_success ) {
+			print "success\n";
+		}
+		else {
+			print "failure\t", $res->code, "\n";
+		}
+	}
+}
+
+
+sub view_an_id {
+	my ( $id, %opts ) = @_;
+	if ( $opts{ id_type } && $opts{ id_type } eq 'atid' ) { 
+		view_task( $ua, $id );
+		if ( $verbose ) { print STDERR "viewing atid $atid\n"; }
+	}
+	elsif ( $id ) { 
+		my (%its_info) = get_its_info( $ua, $id );
+		for my $spid_ref ( @{ $its_info{ final_deliverable_project }->{ sequencing_projects } } ) { 
+			for my $type ( keys %type_map ) {
+				my $at_id = get_at_id( $ua, $$spid_ref{ sequencing_project_id }, $type_map{$type}->{text} );
+
+				if ( $at_id > 0 ) {  # task id was found
+					view_task( $ua, $at_id );
+				}
+			}
+		}
+	}
+}
+
+
+sub set_at_state {
+	my ( $ua, $at_id, $state_id, $who ) = @_;
+
+	my $url = set_atid_url( $at_id, $urls{ state_transition } ) ;
+
+	my $state_message = qq/{"updated-by-cid":"$who","target-state-id":$state_id}/;
+
+	return( post_something( $ua, $url, $state_message ) );
+}
+
+sub get_at_id {
+	# http://wip-stage.jgi-psf.org/pmo_webservices/analysis_tasks?sequencing_project_id=1092327
+	# http://wip-stage.jgi-psf.org/pmo_webservices/analysis_tasks?sequencing_project_id=1092327&analysis_task_type=Structural+Variant+Analysis
+
+	my ( $ua, $spid, $type ) = @_;
+	my $at_id = -1; # fail, not in return blob
+
+	my $url = $urls{ analysis_tasks_spid } . $spid;
+
+	if ( $type ) {
+		$type =~ s/\s/+/g;
+		$url .= "&analysis_task_type=$type";
+	}
+
+	if ( $verbose ) { print STDERR "URL: $url\n" }
+
+	my $res = get_something( $ua, $url );
+
+	my %tasks_overblob = de_json( $res );
+	
+	for my $tasks_holder ( $tasks_overblob{ uss_rw_analysis_tasks } ) {
+		for my $tasks ( @$tasks_holder ) {
+			alias my %tasks = %$tasks;
+			if ( exists $tasks{ analysis_task_id } ) {
+				$at_id = $tasks{ analysis_task_id };
+				last;
+			}
+		}
+	}
+	return( $at_id );
+}
+
+sub do_something{ 
+	my ( $ua, $verb, $url, $content ) = @_;
+
+	if ( $verbose ) { 
+		print STDERR "$verb\t$url\n";
+		if ( $content ) { 
+			print STDERR "CONTENT: $content\n";
+		}
+	}
+	my $req = HTTP::Request->new( $verb => $url );
+
+	if ( $content ) { 
+		$req->content_type( 'application/json' );
+		$req->content( $content );
+	}
+
+	if ( $verbose ) { 
+		#print "URL: $url\n";
+		#print "CONTENT: $content\n" if ( $content );
+		#print "VERB: $verb\n";
+	}
+	my $res = $ua->request( $req );
+	
+	unless( $res->is_success ) { 
+		print STDERR "FATAL: $url\n";
+		warn $res->status_line;
+		exit 1;
+	}
+	return( $res );
+}
+
+sub user_to_cid {
+	my ( $user ) = @_;
+	$user = 'synbio';
+	#$user ||= getlogin;
+	if ( ! exists $user_map{ $user } || $user_map{ $user } < 1 ) {
+		warn "WARNING: $user has no cid in my list, setting to synbio";
+		$user = 'synbio';
+	}
+	return( $user_map{ $user } );
+}
+
+sub fdid_to_spid {
+	my ( $ua, $fdid ) = @_;
+
+	my ( $fdid_ret, $sp_ref, $ap_ref ) = its_project( $ua, $fdid );
+
+	if ( @$sp_ref != 1 ) { 
+		warn "its_project returned strange number of things for fdid $fdid -- only keeping first -- LIKELY A BAD CHOICE";
+	}
+
+	return( shift @$sp_ref );	
+}
+
+	# iterate the analysis_projects  from its_project?
+sub list_tasks {
+	my ( $ua, $fdid ) = @_;
+
+	my $ap_ref = ( its_project( $ua, $fdid ) )[ 2 ];
+	for my $ap ( @$ap_ref ) {
+		print "ap: $ap\n";
+	}
+}
+# haven't seen the multipls entries for ap or sp 
+
+sub its_project {
+	my ( $ua, $id ) = @_;
+	
+	my %its = get_its_info( $ua, $id );
+
+	my $fdid = $its{ final_deliverable_project }->{ final_deliv_project_id };
+
+	my ( @apids, @spids );
+
+	alias my @aps = @{$its{ final_deliverable_project }->{analysis_projects}};
+	alias my @sps = @{$its{ final_deliverable_project }->{sequencing_projects}};
+
+	for my $ap ( @aps ) {
+		print Dumper( $ap );
+		push @apids, $ap->{ analysis_project_id };
+	}
+
+	for my $sp ( @sps ) {
+		push @spids, $sp->{ sequencing_project_id };
+	}
+		
+	return( $fdid, \@spids, \@apids );
+
+}
+
+sub de_json { 
+	my ( $res ) = @_;
+	my $json = JSON::XS->new->utf8;
+	my $blob = $json->decode($res->decoded_content());
+	return( %$blob );
+}
+
+sub get_ua {
+	my $ua = LWP::UserAgent->new;
+	$ua->timeout(10);
+	$ua->agent( 'reseqagent/0.1' );
+	$ua->default_header( 'Authorization' => 'Token token=ac11275bccd585a755f0018912fb2802' );
+
+	return( $ua );
+}
+sub view_final_its_info{
+	my ( $ua, $id ) = @_;
+	#print get_its( $ua, $id );
+	my $its_info = get_its_info( $ua, $id );
+	#print Dumper( get_fdits( $ua, $id ) );
+	print Dumper( $its_info );
+}
+
+sub get_its_info {
+	my ( $ua, $id ) = @_;
+	my $url = $urls{ its_project } . $id;
+	
+	my $res = get_something( $ua, $url ) ;
+
+	err_exit( "$id not found"	) if ( $res->content eq 'null' );
+		
+	return( de_json( $res ) );
+}
+
+sub err_exit {
+	my ( $message ) = @_;
+	my $i = 1;
+	my $call_stack = '';
+	my $caller;
+
+	while ( $caller = ( caller( $i++ ) ) [ 3 ] ) {
+		last unless defined $caller;
+		$call_stack .= "\n$caller";
+	}
+	$message ||= 'ERROR';
+	print STDERR "$message from $call_stack\n";
+	exit 1;
+}
+
+sub view_task {
+	my ( $ua, $atid ) = @_;
+	print Dumper( get_tasks( $ua, $atid ) );
+}
+
+sub get_tasks {
+	my ( $ua, $atid ) = @_;
+
+	if ( ! defined $atid || ! ( $atid =~ /^\d+$/ ) ) {
+		my $error = defined $atid ? $atid : '';
+		err_exit( "no atid or bad atid $error" );
+	}
+	my $url = $urls{ analysis_task } . $atid;
+	my $res = get_something( $ua, $url );
+	return( de_json( $res ) );
+}
+
+sub get_something {
+	my ( $ua, $url ) = @_;
+	my $res = do_something( $ua, 'GET', $url );
+	
+	err_exit( "id not found ( $url )" ) if ( $res->content eq 'null' );  # the non json response..
+	return( $res );
+
+}
+
+sub post_something {
+	my ( $ua, $url, $content ) = @_;
+	my $res = do_something( $ua, 'POST', $url, $content );
+	return( $res );
+}
+
+sub parse_config {
+	my ( $file ) = @_;
+	my @ids = ();
+	open( my $fh, $file ) or die $!;
+	while ( <$fh> ) {
+		my ( $id )  = split;	
+		if ( $id =~ /_/ ) {
+			( $id ) = ( split /_/, $id ) [ -1 ];
+		}
+		push @ids, $id;
+	}
+	return( @ids );
+}
+
+#######
+# view stuffs,  entries beginning wiht 'uh, ' seem less immediately useful
+#
+# ( fdits ) final del info / its info
+# /pmo_webservices/its_project/<SP or AP or FD id>
+#
+# final deliverable [ id is fdid ]
+# /pmo_webservices/final_deliverable_project/:id
+#
+# analysis tasks    [ id is atid ]
+# /pmo_webservices/analysis_task/:id
+#
+# proposal          [ id is proposal id ]
+# /pmo_webservices/proposal/:id
+#
+# analysis projects [ id is apid ]
+# /pmo_webservices/analysis_project/:id
+#
+# get analysis projects for a sequencing project
+# /pmo_webservices/analysis_projects?sequencing_project_id=<sp_id>
+#
+# uh, 'all tasks of a given type associated with a given spid
+# /pmo_webservices/analysis_tasks?sequencing_project_id=<sp_id>&analysis_task_type_id=<task type id>
+# 
+# uh, tasks of the type with the gpts id
+# /pmo_webservices/analysis_tasks?gpts_project_id=<gpts_id>&analysis_task_type=<task type_id>
+#
+# uh, view all tasks of the given type in the given state * max returned is 100, so not 'all' tasks *
+# /pmo_webservices/analysis_tasks/awaiting?analysis_task_state_id=<AT state_id>&analysis_task_type_id=<task type id>
+#
+# uh, to get information about all the 'Mtagenome Metatranscriptome Expression - Other' Analysis Projects associated with a given sequencing project and a source analysis project (the reference AP)
+# /pmo_webservices/mapping_to_other_analysis_projects?src_ap_id=<AP id>&src_sp_id=<SP id>
+#######
+
+__END__
+
+echo -n '{"updated-by-cid":"1817","target-state":"Complete"}' | POST -u -U -s -S -e -c 'application/json' -H 'Authorization: Token token=ac11275bccd585a755f0018912fb2802' https://wip-stage.jgi-psf.org/pmo_webservices/analysis_task/194489/state_transition
+POST https://wip-stage.jgi-psf.org/pmo_webservices/analysis_task/194489/state_transition
+Authorization: Token token=ac11275bccd585a755f0018912fb2802
+User-Agent: lwp-request/5.834 libwww-perl/5.836
+Content-Length: 51
+Content-Type: application/json

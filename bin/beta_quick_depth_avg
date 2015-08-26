@@ -1,0 +1,92 @@
+#!/usr/bin/env perl
+#!/jgi/tools/bin/perl
+use Modern::Perl;
+use File::Basename;
+use Cwd qw/getcwd realpath/;
+use Getopt::Long;
+use GT::Clutils;
+use GT::Config;
+use GT::Reseq::Utils;
+
+umask 2;
+
+my ( @skips, $sge_project, $config_file, $help );
+
+my $time      = '01:40:00';
+my $align_dir = 'bwa_dir';
+
+# $sge_project = 'gentech-reseq.p';
+
+GetOptions(
+	'basedir=s' => \$align_dir,
+	'skip=s'    => \@skips,
+	'time=s'    => \$time,
+	'config=s'  => \$config_file,
+	'Project=s' => \$sge_project,
+);
+
+my @dir_list = @ARGV;
+ 
+if( $config_file ) {
+  @dir_list = ru_add_dirs_from_config_file( $config_file, @dir_list );
+}
+
+if ( $help || !defined $align_dir || !@dir_list ) {
+	my $bin = basename $0;
+	print STDERR "\n$bin -base dir project_dir\n\n";
+	print STDERR " -time STRING  time value for the qsub ( $time )\n";
+	print STDERR " -base DIR     directory under project_dir with the bam\n";
+	print STDERR " -skip DIR     project to skip, can be specified multiple times\n";
+	print STDERR " -P    STRING  uge project for qsub\n";
+	print STDERR "\n";
+	print STDERR " e.g. $bin -base bwa_dir -skip 300661_402288 300661_*\n\n";
+	exit;
+}
+
+my %skips          = map { ( basename $_) => 1 } @skips;
+my $project_option = defined $sge_project ? " -P $sge_project " : '';
+my $script         = "run_qdepth_${$}";
+my $start_dir      = realpath(getcwd);
+
+my $i = 1;
+
+for my $dir ( @dir_list ) {
+	my @cmds           = ();
+
+	my $proj = basename $dir;
+
+	next if ( exists $skips{$proj} );
+
+	if ( !-e "$dir/$align_dir" ) {
+		warn "skipping $dir -- no $align_dir\n";
+		next;
+	}
+	if ( !-e "$dir/$align_dir/$proj.bam" ) {
+		warn "WARNING: $dir/$align_dir/$proj.bam not found, skipping $proj\n";
+		next;
+	}
+	my @bwas;
+	my %ins = ();
+
+	my $bam = "$dir/$align_dir/$proj.bam";
+
+	# samtools depth -q 0 -b 0 300661_405289.bam | head | bgzip  -c > test.depth.bgz && tabix -s 1 -b 2 -e 2 test.depth.bgz
+
+	push @cmds, "export AVG=`bam_quick_depth_avg $bam`";
+	push @cmds, "echo \$AVG > $bam.depth_avg";
+	write_array_cmds( \@cmds, $i++, "$start_dir/$script" );
+}
+$i--;
+if ($i) {
+	write_array_run_script("$script.sh");
+	my $cmd = "qsub -t 1-$i -terse -cwd -b yes -now no -j yes -m as -M eoberortner\@lbl.gov -w e $project_option -l normal.c,ram.c=1600M,h_vmem=3200M,h_rt=$time -pe pe_slots 2 -N qdepth ./$script.sh ";
+	print STDERR "cmd: $cmd\n";
+
+	system($cmd ) && die "ERROR : $cmd failed $!";
+}
+else {
+	print STDERR "WARNING: no tasks to run\n";
+}
+
+__END__
+
