@@ -165,8 +165,6 @@ def find_variants(covlist, seq, chrom, min_cov=5, min_score=30, exclude_edges=Fa
         Returns dict with keys 'mean_cov','pct_cov', and 'variants', where dict['variants']
         is a list of Variant objects
     '''
-    
-    print '---- postanalysis.covvars.find_variants ----'
 
     assert min(covlist[1:]) >= 0
     assert len(covlist) - 1 == len(seq), "Number of coverage values (%d) is not equal to sequence length (%d)" % (len(covlist)-1,len(seq))
