@@ -11,18 +11,20 @@ from rest.SDMInvoker import SDMInvoker
 import generate_config_xml
 import os
 
-#BASE_DIR = '/Users/eoberortner/Projects/JGI/Illumina/git/JGI-MiSeq/data/libraries/'
-BASE_DIR = '/global/scratch2/sd/synbio/sequencing/illumina/'
+BASE_DIR = '/Users/eoberortner/Projects/JGI/Illumina/git/JGI-MiSeq/data/libraries/'
+#BASE_DIR = '/global/scratch2/sd/synbio/sequencing/illumina/'
 
 def processArguments(arguments):
     
     ##print 'here are the arguments {}'.format(arguments)
     
-    return ('AOSPB', 'ref/B64_RBS_Nextera_ref.fasta')
+    return ('AHPZC', 'ref/427_5415poolsRef.fasta')
+#    return ('AHPZB', 'ref/427_5415poolsRef.fasta')
+#    return ('AOSPB', 'ref/B64_RBS_Nextera_ref.fasta')
 #    return ('ANZPH', 'ref/references.fasta')
 #    return ('AAONP', 'ref/references.fasta')
     
-DATE = '081515'
+DATE = '082015'
     
 if __name__ == '__main__':
     
@@ -78,7 +80,10 @@ if __name__ == '__main__':
     ## STEP 5: OUTPUT HTML
     ## 
     ## generate config.xml and provide it as input to summarize_analysis.py script
+    subLibraryNames.sort()
 
+    print subLibraryNames
+    
     generate_config_xml.generateConfigXML(BASE_DIR, '{}_{}'.format(DATE, libraryName), subLibraryNames)
      
     pass

@@ -7,7 +7,7 @@ Created on Jul 23, 2015
 CONFIG_XML_HEADER = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <SBAnalysis>
 <analysis name="{}" 
-    reference="{}/{}/ref/references.fasta" 
+    reference="{}/{}/{}" 
     location="{}">
 '''
 
@@ -23,10 +23,10 @@ POOL_TAG = '''
     </pool>'''
 
 
-def generateConfigXML(base_dir, library_name, list_of_sublibraries):
+def generateConfigXML(base_dir, library_name, list_of_sublibraries, referenceFasta):
     
     ## HEADER information
-    CONFIG_XML_CONTENT = CONFIG_XML_HEADER.format(library_name, base_dir, library_name, base_dir)
+    CONFIG_XML_CONTENT = CONFIG_XML_HEADER.format(library_name, base_dir, library_name, referenceFasta, base_dir)
 
     for subLibrary in list_of_sublibraries:
         
@@ -58,7 +58,9 @@ if __name__ == '__main__':
     
     ##library_name = '080415_ANZPH'
     #library_name = '081215_ANZPH'
-    library_name = '081515_AOSPB'
+    #library_name = '081515_AOSPB'
+    library_name = '082015_ANZPH'
+    refFasta = 'ref/427_5415poolsRef.fasta'
     
     CONFIG_XML_CONTENT = CONFIG_XML_HEADER.format(library_name, base_dir, library_name, base_dir)
         
