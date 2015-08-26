@@ -92,9 +92,10 @@ if __name__=='__main__':
                     if os.path.exists(resource_file):
                         pool_resources.append((alias_filename(resource_file),'%s_%s' % (job.attrib['protocol'],rname)))
       
-        igvfile = os.path.join(resultdir,'%s.igv.xml' % pool.attrib['name'])
-        with open(igvfile,'w') as outh:
-            print >>outh, igv_xml(refurl,pool_resources)
+            ## generate the igv.xml file for each pool
+            igvfile = os.path.join(resultdir,'%s.igv.xml' % pool.attrib['name'])
+            with open(igvfile,'w') as outh:
+                print >>outh, igv_xml(refurl,pool_resources)
             
         igvurls[pool.attrib['name']] = alias_filename(igvfile)
 
