@@ -101,6 +101,9 @@ Example:
 ```
 analysis.sh AAONP ref/references.fasta
 ```
+
+The ```analysis.sh``` script utilizes Java (>1.7), Python (2.7), and BROAD's Genome Analysis Toolkit (GATK) (https://www.broadinstitute.org/gatk/).
+Currently, the ```analysis.sh``` script is implemented for NERSC and utilizes NERSC's module system (```module load```). 
  
 ## Step VI: Generate HTML Representation
 
@@ -116,11 +119,7 @@ Example:
 generate_html.sh AAONP ref/my_references.fasta
 ```
 
-The ```postprocessing.sh``` script utilizes Java (>1.7), Python (2.7), and BROAD's Genome Analysis Toolkit (GATK) (https://www.broadinstitute.org/gatk/).
-Currently, the ```postprocessing.sh``` script is implemented for NERSC and utilizes NERSC's module system (```module load```). 
-
-The resulting HTML pages also provide links the XML files that can be nicely viewed in the Integrative Genomics Viewer (IGV), developed by the BROAD institute (https://www.broadinstitute.org/software/igv/). 
-IGV must be downloaded and installed locally.
+The resulting HTML pages also provide links the XML files that can be nicely viewed in the Integrative Genomics Viewer (IGV), developed by the BROAD institute (https://www.broadinstitute.org/software/igv/). IGV must be, however, downloaded and installed locally.
 
 
 ## NOTE!
