@@ -35,7 +35,7 @@ must be retrieved from the database using the following command:
 jamo_temp_libinfo_fix pre.libraries.info > libraries.info
 ```
 
-## Step III: Reference Sequence(s)
+## Step III: Prepare Reference Sequences
 
 In the library's directory, create a sub-directory in that all files of the reference sequences are stored.
 
@@ -59,15 +59,16 @@ prep_ref -index ref/<reference-sequences>.fasta
 
 ## Step IV: Sequence Alignment
 
-In this step, the sequenced sequences are aligned with the reference sequences. First, generate a directory 
-structure for each sub-library. The ```beta_prep_setup_dirs``` receives the information about the sub-libraries 
-from the ```libraries.info``` file.
+In this step, the raw reads are aligned with the reference sequences. 
+
+First, generate a directory structure for each sub-library. The ```beta_prep_setup_dirs``` receives the 
+information about the sub-libraries from the ```libraries.info``` file.
 
 ```
-beta_prep_setup_dirs -ref ref/<reference-sequences>.fasta -rna -c libraries.info
+beta_prep_setup_dirs -ref <reference-sequences>.fasta -rna -c libraries.info
 ```
 
-Currently, it is unclear what the ```beta_slice_fq``` script does and why it is needed.
+Next, we split the raw reads into chunks of reads/read pairs using the ```beta_slice_fq``` script.
  
 ```
 beta_slice_fq -config libraries.info
@@ -86,21 +87,33 @@ beta_run_alignments -c libraries.info
 Again, the ```beta_run_alignments``` script submits jobs and we need to wait until all jobs were executed 
 before proceeding.
 
-## Step V: Generate HTML Representation ("Post-Processing")
+## Step V: Perform Analysis
 
-When having the aligned reads (encoded in .bam files) for each sub-library, we generate an HTML representation 
-of the sequencing results. Representing the sequencing results in HTML is a user-friendly and easy-accessible 
-way to show the results to biologists.
+When having the aligned reads (encoded in .bam files) for each sub-library, we need to analyze the 
+sequence alignments and the depth of coverage. Based on the results, we make the variant calls, 
+e.g. errors or mutations.
+ 
+```
+analysis.sh <library-name> <reference-sequences>.fasta
+```
+ 
+Example:
+```
+analysis.sh AAONP ref/references.fasta
+```
+ 
+## Step VI: Generate HTML Representation
 
-We created a script that combines multiple steps to generate the HTML page and the sequencing results. 
+In the final step, we generate an HTML representation of the sequencing results. We created a script that 
+combines multiple steps to generate the HTML page and the sequencing results. 
 
 ```
-postprocessing.sh <library-name> <reference-sequence>
+generate_html.sh <library-name> <reference-sequences>.fasta
 ```
 
 Example:
 ```
-postprocessing.sh AAONP ref/my_references.fasta
+generate_html.sh AAONP ref/my_references.fasta
 ```
 
 The ```postprocessing.sh``` script utilizes Java (>1.7), Python (2.7), and BROAD's Genome Analysis Toolkit (GATK) (https://www.broadinstitute.org/gatk/).
